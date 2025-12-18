@@ -11,6 +11,8 @@ type GhostCursorWrapperProps = {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+
+  // Visual / behavior controls
   trailLength?: number;
   inertia?: number;
   grainIntensity?: number;
@@ -21,10 +23,16 @@ type GhostCursorWrapperProps = {
   color?: string;
   mixBlendMode?: React.CSSProperties['mixBlendMode'];
   edgeIntensity?: number;
+
+  // Perf controls
   maxDevicePixelRatio?: number;
   targetPixels?: number;
+
+  // Fade controls
   fadeDelayMs?: number;
   fadeDurationMs?: number;
+
+  // Layout
   zIndex?: number;
 };
 
@@ -64,14 +72,16 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
   const currentMouseRef = useRef(new THREE.Vector2(0.5, 0.5));
   const velocityRef = useRef(new THREE.Vector2(0, 0));
   const fadeOpacityRef = useRef(1.0);
-  const lastMoveTimeRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const lastMoveTimeRef = useRef(
+    typeof performance !== 'undefined' ? performance.now() : Date.now()
+  );
   const pointerActiveRef = useRef(false);
   const runningRef = useRef(false);
 
-  const isTouch = useMemo(
-    () => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0),
-    []
-  );
+  const isTouch = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  }, []);
 
   const pixelBudget = targetPixels ?? (isTouch ? 0.9e6 : 1.3e6);
   const fadeDelay = fadeDelayMs ?? (isTouch ? 500 : 1000);
@@ -169,10 +179,10 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     }
   `;
 
-  const FilmGrainShader = useMemo(() => {
-    return {
+  const FilmGrainShader = useMemo(
+    () => ({
       uniforms: {
-        tDiffuse: { value: null },
+        tDiffuse: { value: null as THREE.Texture | null },
         iTime: { value: 0 },
         intensity: { value: grainIntensity }
       },
@@ -198,13 +208,14 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
           gl_FragColor = color;
         }
       `
-    };
-  }, [grainIntensity]);
+    }),
+    [] // grainIntensity is driven via a separate effect
+  );
 
   const UnpremultiplyPass = useMemo(
     () =>
       new ShaderPass({
-        uniforms: { tDiffuse: { value: null } },
+        uniforms: { tDiffuse: { value: null as THREE.Texture | null } },
         vertexShader: `
           varying vec2 vUv;
           void main(){
@@ -234,30 +245,33 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
   }
 
   useEffect(() => {
-    // Check if three.js is available
-    if (typeof THREE === 'undefined' || typeof Renderer === 'undefined') {
-      console.warn('three.js library not found. Please install: npm install three @types/three');
-      return;
-    }
-
     const host = containerRef.current;
     const parent = host?.parentElement;
     if (!host || !parent) return;
 
+    // Ensure parent is positioned so the overlay can be absolutely positioned
     const prevParentPos = parent.style.position;
     if (!prevParentPos || prevParentPos === 'static') {
       parent.style.position = 'relative';
     }
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isTouch,
-      alpha: true,
-      depth: false,
-      stencil: false,
-      powerPreference: isTouch ? 'low-power' : 'high-performance',
-      premultipliedAlpha: false,
-      preserveDrawingBuffer: false
-    });
+    // Create renderer
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: !isTouch,
+        alpha: true,
+        depth: false,
+        stencil: false,
+        powerPreference: isTouch ? 'low-power' : 'high-performance',
+        premultipliedAlpha: false,
+        preserveDrawingBuffer: false
+      });
+    } catch (err) {
+      console.warn('Failed to create WebGLRenderer (WebGL may be unsupported).', err);
+      return;
+    }
+
     renderer.setClearColor(0x000000, 0);
     rendererRef.current = renderer;
 
@@ -270,13 +284,17 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
 
     host.appendChild(renderer.domElement);
 
+    // Basic scene setup
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
     const geom = new THREE.PlaneGeometry(2, 2);
 
     const maxTrail = Math.max(1, Math.floor(trailLength));
-    trailBufRef.current = Array.from({ length: maxTrail }, () => new THREE.Vector2(0.5, 0.5));
+    trailBufRef.current = Array.from(
+      { length: maxTrail },
+      () => new THREE.Vector2(0.5, 0.5)
+    );
     headRef.current = 0;
 
     const baseColor = new THREE.Color(color);
@@ -287,10 +305,14 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
         iTime: { value: 0 },
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
         iMouse: { value: new THREE.Vector2(0.5, 0.5) },
-        iPrevMouse: { value: trailBufRef.current.map(v => v.clone()) },
+        iPrevMouse: {
+          value: trailBufRef.current.map(v => v.clone())
+        },
         iOpacity: { value: 1.0 },
         iScale: { value: 1.0 },
-        iBaseColor: { value: new THREE.Vector3(baseColor.r, baseColor.g, baseColor.b) },
+        iBaseColor: {
+          value: new THREE.Vector3(baseColor.r, baseColor.g, baseColor.b)
+        },
         iBrightness: { value: brightness },
         iEdgeIntensity: { value: edgeIntensity }
       },
@@ -305,13 +327,19 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     const mesh = new THREE.Mesh(geom, material);
     scene.add(mesh);
 
+    // Post-processing chain
     const composer = new EffectComposer(renderer);
     composerRef.current = composer;
 
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), bloomStrength, bloomRadius, bloomThreshold);
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(1, 1),
+      bloomStrength,
+      bloomRadius,
+      bloomThreshold
+    );
     bloomPassRef.current = bloomPass;
     composer.addPass(bloomPass);
 
@@ -330,8 +358,15 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
         typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
         maxDevicePixelRatio
       );
+
       const need = cssW * cssH * currentDPR * currentDPR;
-      const scale = need <= pixelBudget ? 1 : Math.max(0.5, Math.min(1, Math.sqrt(pixelBudget / Math.max(1, need))));
+      const scale =
+        need <= pixelBudget
+          ? 1
+          : Math.max(
+              0.5,
+              Math.min(1, Math.sqrt(pixelBudget / Math.max(1, need)))
+            );
       const pixelRatio = currentDPR * scale;
 
       renderer.setPixelRatio(pixelRatio);
@@ -348,12 +383,19 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     };
 
     resize();
-    const ro = new ResizeObserver(resize);
-    resizeObsRef.current = ro;
-    ro.observe(parent);
-    ro.observe(host);
 
-    const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(resize);
+      resizeObsRef.current = ro;
+      ro.observe(parent);
+      ro.observe(host);
+    }
+
+    const start = typeof performance !== 'undefined'
+      ? performance.now()
+      : Date.now();
+
     const animate = () => {
       const now = performance.now();
       const t = (now - start) / 1000;
@@ -383,6 +425,7 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
       const N = trailBufRef.current.length;
       headRef.current = (headRef.current + 1) % N;
       trailBufRef.current[headRef.current].copy(mat.uniforms.iMouse.value);
+
       const arr = mat.uniforms.iPrevMouse.value as THREE.Vector2[];
       for (let i = 0; i < N; i++) {
         const srcIdx = (headRef.current - i + N) % N;
@@ -416,17 +459,27 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
 
     const onPointerMove = (e: PointerEvent) => {
       const rect = parent.getBoundingClientRect();
-      const x = THREE.MathUtils.clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-      const y = THREE.MathUtils.clamp(1 - (e.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+      const x = THREE.MathUtils.clamp(
+        (e.clientX - rect.left) / Math.max(1, rect.width),
+        0,
+        1
+      );
+      const y = THREE.MathUtils.clamp(
+        1 - (e.clientY - rect.top) / Math.max(1, rect.height),
+        0,
+        1
+      );
       currentMouseRef.current.set(x, y);
       pointerActiveRef.current = true;
       lastMoveTimeRef.current = performance.now();
       ensureLoop();
     };
+
     const onPointerEnter = () => {
       pointerActiveRef.current = true;
       ensureLoop();
     };
+
     const onPointerLeave = () => {
       pointerActiveRef.current = false;
       lastMoveTimeRef.current = performance.now();
@@ -440,7 +493,9 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     ensureLoop();
 
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
       runningRef.current = false;
       rafRef.current = null;
 
@@ -458,6 +513,7 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
       if (renderer.domElement && renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
       }
+
       if (!prevParentPos || prevParentPos === 'static') {
         parent.style.position = prevParentPos;
       }
@@ -465,7 +521,6 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
   }, [
     trailLength,
     inertia,
-    grainIntensity,
     bloomStrength,
     bloomRadius,
     bloomThreshold,
@@ -476,13 +531,22 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     color,
     brightness,
     mixBlendMode,
-    edgeIntensity
+    edgeIntensity,
+    maxDevicePixelRatio,
+    FilmGrainShader,
+    UnpremultiplyPass
   ]);
+
+  // Dynamic uniform updates
 
   useEffect(() => {
     if (materialRef.current) {
       const c = new THREE.Color(color);
-      (materialRef.current.uniforms.iBaseColor.value as THREE.Vector3).set(c.r, c.g, c.b);
+      (materialRef.current.uniforms.iBaseColor.value as THREE.Vector3).set(
+        c.r,
+        c.g,
+        c.b
+      );
     }
   }, [color]);
 
@@ -514,15 +578,21 @@ const GhostCursorWrapper: React.FC<GhostCursorWrapperProps> = ({
     }
   }, [mixBlendMode]);
 
-  const mergedStyle = useMemo<React.CSSProperties>(() => ({ zIndex, ...style }), [zIndex, style]);
+  const mergedStyle = useMemo<React.CSSProperties>(
+    () => ({ zIndex, ...style }),
+    [zIndex, style]
+  );
 
   return (
     <div className={className} style={style}>
-      <div ref={containerRef} className={`ghost-cursor ${className ?? ''}`} style={mergedStyle} />
+      <div
+        ref={containerRef}
+        className={`ghost-cursor ${className ?? ''}`}
+        style={mergedStyle}
+      />
       {children}
     </div>
   );
 };
 
 export default GhostCursorWrapper;
-
