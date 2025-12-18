@@ -10,35 +10,50 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Session check: redirect to dashboard if already authenticated
+  // Redirect to dashboard if already authenticated
   useEffect(() => {
     const checkSession = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (session) {
         router.push('/dashboard');
       }
     };
+
     checkSession();
   }, [router]);
 
-  // Preserve existing Supabase auth logic exactly as it was
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
 
-    // Existing signInWithOAuth call - DO NOT MODIFY
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: 'http://localhost:3000/dashboard',
-      },
-    });
+    try {
+      // Build redirect URL based on where the app is running (localhost or Vercel)
+      const redirectOrigin =
+        typeof window !== 'undefined' ? window.location.origin : '';
 
-    if (error) {
-      console.error('Error signing in with Google', error.message);
-      setError(error.message);
+      const redirectTo = redirectOrigin
+        ? `${redirectOrigin}/dashboard`
+        : '/dashboard';
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      // On success, Supabase will redirect to the `redirectTo` URL,
+      // so we don't need to do anything else here.
+    } catch (err: any) {
+      console.error('Error signing in with Google', err?.message ?? err);
+      setError(err?.message ?? 'Failed to sign in with Google.');
       setLoading(false);
     }
   };
@@ -49,7 +64,6 @@ export default function LoginPage() {
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 space-y-6">
           {/* Logo / Title */}
           <div className="text-center space-y-2">
-            {/* TODO: Consider applying ReactBits "Gradient Text" to this heading later. */}
             <h1 className="text-3xl font-bold text-[var(--color-text)]">
               Sign in to HabitCircle
             </h1>
@@ -69,7 +83,6 @@ export default function LoginPage() {
           )}
 
           {/* Google Login Button */}
-          {/* TODO: Wrap this primary auth button with ReactBits "Glare Hover" effect later. */}
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
